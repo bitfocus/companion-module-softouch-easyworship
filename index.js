@@ -1,5 +1,5 @@
 var tcp           = require('../../tcp');
-var bonjour       = require('./bonjour')({multicast: true});
+var bonjour       = require('./node_modules/bonjour')({multicast: true});
 var instance_skel = require('../../instance_skel');
 const { selectColor } = require('debug');
 var debug;
