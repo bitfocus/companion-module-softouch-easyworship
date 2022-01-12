@@ -42,9 +42,9 @@ instance.prototype.init = function() {
 		self.config.UUID = uuidv4();
 		self.saveConfig();
 	}
-	console.log('ID=' + self.id);
-	console.log('UUID=' + self.config.UUID);
-	console.log('Last EasyWorship Server=', self.config.EWServer);
+	console.debug('ID=' + self.id);
+	console.debug('UUID=' + self.config.UUID);
+	console.debug('Last EasyWorship Server=', self.config.EWServer);
 
 	self.connected = false;
 	self.ezw = [];
@@ -61,7 +61,7 @@ instance.prototype.updateConfig = function(config) {
 	self.config = config;
 
 	// Save the selected server so the next instance of companion will be able to make the correct initial connection
-	console.log('Selected EasyWorship Server: ',self.config.EWServers);
+	console.debug('Selected EasyWorship Server: ',self.config.EWServers);
 	self.config.EWServer = self.config.EWServers;
 	self.saveConfig();
 
@@ -76,7 +76,7 @@ instance.prototype.init_bonjour = function() {
 	self.ezw = [];
 	self.status(self.STATE_WARNING, 'Searching for EasyWorship Servers');
 	self.log('info','Searching for EasyWorship Servers');
-	console.log('Bonjour Searching for EasyWorship Servers');
+	console.debug('Bonjour Searching for EasyWorship Servers');
 	bonjour.find({name: '_ezwremote._tcp'}, function (service) {
 		var type = service['type'];
 		if (type != undefined && type === 'ezwremote') {
@@ -88,12 +88,12 @@ instance.prototype.init_bonjour = function() {
 				}
 			}
 			if (!bExists) {
-				console.log('Found Server: ', service);
+				console.debug('Found Server: ', service);
 				self.ezw.push(name);
 				if (name == self.config.EWServer) {
 					self.config.EWPort = service['port'];
 					self.config.EWAddr = service['referer']['address'];
-					console.log('Default EasyWorship Server=', self.config.EWServer, 'at IP', self.config.EWAddr, 'on Port', self.config.EWPort);
+					console.debug('Default EasyWorship Server=', self.config.EWServer, 'at IP', self.config.EWAddr, 'on Port', self.config.EWPort);
 				}
 			}
 		}
@@ -118,7 +118,7 @@ instance.prototype.init_tcp = function() {
 		});
 
 		self.socket.on('error', function (err) {
-			console.log('Network error', err.message);
+			console.debug('Network error', err.message);
 			self.status(self.STATE_ERROR, err);
 			self.log('error','Network error: ' + err.message);
 
@@ -138,14 +138,14 @@ instance.prototype.init_tcp = function() {
 			}
 			self.status(self.STATE_OK);
 			self.log('info','Connected to ' + self.config.EWServer);
-			console.log('Connected to ' + self.config.EWServer);
+			console.debug('Connected to ' + self.config.EWServer);
 			self.connected = true;
 			var cmd = '{"action":"connect", "uid":"' + self.config.UUID + '", "device_name":"' + self.config.ClientName + '", "device_type":8, "requestrev":"0"}';
 			var sendBuf = Buffer.from(cmd + '\r\n', 'latin1');
 			if (sendBuf != '') {
 				if (self.socket !== undefined && self.socket.connected) {
 					self.socket.send(sendBuf);
-					console.log('sent ', cmd);
+					console.debug('sent ', cmd);
 				}
 			}
 		})
@@ -153,7 +153,7 @@ instance.prototype.init_tcp = function() {
 		self.socket.on('close', function () {
 			self.status(self.STATE_ERROR);
 			self.log('info', 'Lost connection to ' + self.config.EWServer);
-			console.log('Lost connection to ' + self.config.EWServer);
+			console.debug('Lost connection to ' + self.config.EWServer);
 			self.connected = false;
 		})
 
@@ -164,25 +164,25 @@ instance.prototype.init_tcp = function() {
 				for (var i = 0; i < cmds.length - 1; i++) {
 					var cmd = cmds[i].toString();
 					cmd = cmd.split('\r\n')[0];
-					console.log(cmd);
+					console.debug(cmd);
 					var command = JSON.parse(cmd);
 					self.requestrev = command['requestrev'];
 					var action = command['action'];
 					if (action == 'notPaired') {
 						self.status(self.STATE_WARNING);
 						self.log('info', 'Not paired with ' + self.config.EWServer);
-						console.log('Not paired with ' + self.config.EWServer);
+						console.debug('Not paired with ' + self.config.EWServer);
 						self.config.paired = false;
 					}
 					else if (action == 'paired') {
 						self.status(self.STATE_OK);
 						self.log('info', 'Paired with ' + self.config.EWServer);
-						console.log('Paired with ' + self.config.EWServer);
+						console.debug('Paired with ' + self.config.EWServer);
 						self.config.paired = true;
 					}
 					else if (action == 'status') {
 						self.status(self.STATE_OK);
-						console.log('Received status of ' + self.config.EWServer);
+						console.debug('Received status of ' + self.config.EWServer);
 						self.EZWLogo = command['logo'] ? 1 : 0;
 						self.EZWBlack = command['black'] ? 1 : 0;
 						self.EZWClear = command['clear'] ? 1 : 0;
@@ -203,18 +203,18 @@ instance.prototype.init_tcp = function() {
 						self.imagehash = command['imagehash'];
 						self.permissions = command['permissions'];
 
-						console.log('{"action":"status","logo":"' + (self.EZWLogo ? 'true' : 'false') + '","black":"' + (self.EZWBlack ? 'true' : 'false') + '","clear":"' + (self.EZWClear ? 'true' : 'false') + '","rectype":' + self.rectype + ',"pres_rowid":"' + self.pres_rowid + '","slide_rowid":"' + self.slide_rowid + '","pres_no":"' + self.pres_no + '","slide_no":"' + self.slide_no + '","schedulerev":"' + self.schedulerev + '","liverev":"' + self.liverev + '","imagehash":"' + self.imagehash + '","permissions":' + self.permissions + ',"requestrev":"' + self.requestrev + '"}');
+						console.debug('{"action":"status","logo":"' + (self.EZWLogo ? 'true' : 'false') + '","black":"' + (self.EZWBlack ? 'true' : 'false') + '","clear":"' + (self.EZWClear ? 'true' : 'false') + '","rectype":' + self.rectype + ',"pres_rowid":"' + self.pres_rowid + '","slide_rowid":"' + self.slide_rowid + '","pres_no":"' + self.pres_no + '","slide_no":"' + self.slide_no + '","schedulerev":"' + self.schedulerev + '","liverev":"' + self.liverev + '","imagehash":"' + self.imagehash + '","permissions":' + self.permissions + ',"requestrev":"' + self.requestrev + '"}');
 					}
 					var sendBuf = Buffer.from('{"action":"heartbeat","requestrev":"' + self.requestrev + '"}\r\n', 'latin1');
 					if (sendBuf != '') {
 						if (self.socket !== undefined && self.socket.connected) {
 							self.socket.send(sendBuf);
-							console.log('sent ' + sendBuf.toString());
+							console.debug('sent ' + sendBuf.toString());
 						}
 					}
 									}
 			} catch (err) {
-				console.log('Exception: ', err, ' on JSON ', data.toString());
+				console.debug('Exception: ', err, ' on JSON ', data.toString());
 			}
 
 			self.checkFeedbacks();
@@ -229,7 +229,7 @@ instance.prototype.destroy = function() {
 		self.socket.destroy();
 	}
 
-	console.log("module destroyed: ", self.id);
+	console.debug("module destroyed: ", self.id);
 }
 
 instance_skel.extendedBy(instance);
