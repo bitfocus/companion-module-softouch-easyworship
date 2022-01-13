@@ -1,4 +1,4 @@
-## Generic EZW Requests Module
+## Softouch EasyWorship
 
 This module controls EasyWorship 7.3+
 
