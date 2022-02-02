@@ -1,7 +1,7 @@
 exports = module.exports = function () {
 	var self = this;
 
-	self.system.emit('instance_actions', self.id, {
+	self.setActions({
 		'logo': {
 			label: 'Logo Command',
 			options: [
