@@ -1,37 +1,37 @@
 {
-  "name": "softouch-easyworship",
-  "version": "1.1.1",
-  "api_version": "1.0.0",
-  "keywords": [
-    "API"
-  ],
-  "manufacturer": "Softouch Development Inc",
-  "product": "EasyWorship",
-  "shortname": "EZW",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/bitfocus/companion-module-softouch-easyworship.git"
-  },
-  "author": "Jeff VanHorn <jvanhorn@easyworship.com>",
-  "contributors": [
-    "Noah Callaway <noah@thecallaways.net>",
-    "Andy Bantly <abantly@easyworship.com>"
-  ],
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/bitfocus/companion-module-softouch-easyworship/issues"
-  },
-  "homepage": "https://github.com/bitfocus/companion-module-softouch-easyworship#readme",
-  "description": "See HELP.md and LICENSE",
-  "directories": {
-    "lib": "lib"
-  },
-  "dependencies": {
-    "bonjour": "^3.5.0"
-  },
-  "devDependencies": {}
+	"name": "softouch-easyworship",
+	"version": "1.1.1",
+	"api_version": "1.0.0",
+	"keywords": [
+		"API"
+	],
+	"manufacturer": "Softouch Development Inc",
+	"product": "EasyWorship",
+	"shortname": "EZW",
+	"main": "index.js",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/bitfocus/companion-module-softouch-easyworship.git"
+	},
+	"author": "Jeff VanHorn <jvanhorn@easyworship.com>",
+	"contributors": [
+		"Noah Callaway <noah@thecallaways.net>",
+		"Andy Bantly <abantly@easyworship.com>"
+	],
+	"license": "MIT",
+	"bugs": {
+		"url": "https://github.com/bitfocus/companion-module-softouch-easyworship/issues"
+	},
+	"homepage": "https://github.com/bitfocus/companion-module-softouch-easyworship#readme",
+	"description": "See HELP.md and LICENSE",
+	"directories": {
+		"lib": "lib"
+	},
+	"dependencies": {
+		"bonjour": "^3.5.0"
+	},
+	"devDependencies": {}
 }
