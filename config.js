@@ -1,38 +1,35 @@
-exports = module.exports = function () {
-	var self = this;
+module.exports = {
+	getConfigFields(instance) {
+		const fields = [
+			{
+				type: 'textinput',
+				id: 'ClientName',
+				label: 'Remote Name',
+				width: 6,
+				value: instance.config.ClientName,
+			},
+			{
+				type: 'static-text',
+				id: 'CurrentEWServer',
+				label: 'Currently Controlling',
+				width: 6,
+				value: instance.config.EWServer,
+			},
+		];
 
-	var fields = [
-		{
-			type: 'textinput',
-			id: 'ClientName',
-			label: 'Remote Name',
+		const dropdown = {
+			type: 'dropdown',
+			label: 'Available EasyWorship Servers',
 			width: 6,
-			value: self.config.ClientName
-		},
-		{
-			type: 'text',
-			id: 'CurrentEWServer',
-			label: 'Currently Controlling',
-			width: 6,
-			value: self.config.EWServer
+			id: 'EWServers',
+			default: 1,
+			choices: instance.ezw.map(server => ({
+                id: server,
+                label: server,
+            })),
 		}
-	];
 
-	var dropdown = {
-		type: 'dropdown',
-		label: 'Available EasyWorship Servers',
-		width: 6,
-		id: 'EWServers',
-		default: 1,
-		choices: []
-	};
-
-	// Refactor to use the more stable computer name as the id.
-	for (let i = 1; i <= self.ezw.length; i++) {
-		dropdown['choices'].push(JSON.parse('{"id": "' + self.ezw[i - 1] + '", "label": "' + self.ezw[i - 1] + '"}'));
+		fields.push(dropdown);
+		return fields;
 	}
-
-	fields.push(dropdown);
-
-	return fields;
-};
+}
