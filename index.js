@@ -1,236 +1,393 @@
-var tcp           = require('../../tcp');
-var bonjour       = require('bonjour')({multicast: true});
-var instance_skel = require('../../instance_skel');
-const { selectColor } = require('debug');
-var debug;
-var log;
+const { InstanceBase, runEntrypoint, TCPHelper, combineRgb } = require('@companion-module/base')
+const Bonjour = require('bonjour-service').Bonjour
+const { randomUUID } = require('crypto');
+const { sendCommand, actions } = require('./actions')
+const { getConfigFields } = require('./config.js');
+const { getFeedbacks } = require('./feedbacks');
+const { getPresets } = require('./presets')
+const { getVariables } = require('./variables');
 
-instance.prototype.config_fields	= require('./config');
-instance.prototype.actions			= require('./actions');
-instance.prototype.action			= require('./action');
-instance.prototype.init_feedback	= require('./init_feedback');
-instance.prototype.feedback			= require('./feedback'); // does nothing, feedbacks are in callbacks
-instance.prototype.init_presets		= require('./presets');
-instance.prototype.init_variables	= require('./variables');
+class EasyWorshipInstance extends InstanceBase {
+	
+	constructor(internal) {
+		super(internal)	
 
-function uuidv4() {
-	return 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'.replace(/[x]/g, function(c) {
-		var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-		return v.toString(16);
-	});
-}  
+		this.paired = false
+		this.config = {}
+		this.socket = null
+		this.connected = false
+		this.ezw = []
+		this.EZWLogo = 0
+		this.EZWBlack = 0
+		this.EZWClear = 0
+		this.EZWLivePreview = 0
+		this.previousEWServer = ''
+		this.retryInterval = null 
+		
+		Object.assign(this, {
+			...actions,
+		})	
+				
+	}	
+	
+	uuidv4() {
+		return randomUUID();
+	}  
 
-function instance(system, id, config) {
-	var self = this;
+	async init(config) {		
 
-	// super-constructor
-	instance_skel.apply(this, arguments);
-	self.actions(); // export actions
+		try {
+			this.config = config || {}
+			this.updateStatus('connecting')
 
-	return self;
-}
-
-instance.prototype.init = function() {
-	var self = this;
-
-	debug = self.debug;
-	log = self.log;
-
-	if (self.config.EWServer === undefined)
-		self.config.EWServer = '';
-	if (self.config.UUID === undefined) {
-		self.config.UUID = uuidv4();
-		self.saveConfig();
-	}
-	debug('ID=' + self.id);
-	debug('UUID=' + self.config.UUID);
-	debug('Last EasyWorship Server=', self.config.EWServer);
-
-	self.connected = false;
-	self.ezw = [];
-
-	self.init_feedback();
-	self.init_variables();
-	self.init_presets();
-	self.init_bonjour();
-}
-
-instance.prototype.updateConfig = function(config) {
-	var self = this;
-
-	self.config = config;
-
-	// Save the selected server so the next instance of companion will be able to make the correct initial connection
-	debug('Selected EasyWorship Server: ',self.config.EWServers);
-	self.config.EWServer = self.config.EWServers;
-	self.saveConfig();
-
-	// Tear down and initialize with updated configuration
-	self.destroy();
-	self.init();
-}
-
-instance.prototype.init_bonjour = function() {
-	var self = this;
-
-	self.ezw = [];
-	self.status(self.STATE_WARNING, 'Searching for EasyWorship Servers');
-	self.log('info','Searching for EasyWorship Servers');
-	debug('Bonjour Searching for EasyWorship Servers');
-	bonjour.find({name: '_ezwremote._tcp'}, function (service) {
-		var type = service['type'];
-		if (type != undefined && type === 'ezwremote') {
-		var name = service['name'];
-			var bExists = false;
-			for (const servername of self.ezw) {
-				if (servername == name) {
-					bExists = true;
-				}
+			let configUpdated = false
+			if (this.config.EWServer === undefined) {
+				this.config.EWServer = ''
+				configUpdated = true
 			}
-			if (!bExists) {
-				debug('Found Server: ', service);
-				self.ezw.push(name);
-				if (name == self.config.EWServer) {
-					self.config.EWPort = service['port'];
-					self.config.EWAddr = service['referer']['address'];
-					debug('Default EasyWorship Server=', self.config.EWServer, 'at IP', self.config.EWAddr, 'on Port', self.config.EWPort);
-				}
+			if (this.config.UUID === undefined) {
+				this.config.UUID = this.uuidv4()
+				configUpdated = true
 			}
+
+			if (configUpdated) {
+				this.saveConfig(this.config)
+			}
+
+			this.log('info', 'UUID=' + this.config.UUID);
+			this.log('info', 'Last EasyWorship Server=', this.config.EWServer);
+			this.log('info', 'ID=' + this.id);
+
+			this.connected = false;
+			this.ezw = [];
+
+			this.initFeedbacks()
+			this.initVariables()
+			this.initPresets()
+			this.initActions()
+			this.initBonjour(() => {
+				this.initTCP();
+			});
+		} 
+		catch (error) {
+			this.log('info', `Initialization failed: ${error.message}`)
+    		this.updateStatus('connection_failure', 'Initialization failed')
 		}
-	});
-}
-
-instance.prototype.init_tcp = function() {
-	var self = this;
-
-	if (self.socket !== undefined) {
-		self.socket.destroy();
-		delete self.socket;
 	}
 
-	self.status(self.STATE_WARNING, 'Connecting');
+	async destroy() {
+		// Clear retry interval if it exists
+		if (this.retryInterval) {
+			clearInterval(this.retryInterval);
+			this.retryInterval = null;
+		}
 
-	if (self.config.EWAddr && self.config.EWPort)  {
-			self.socket = new tcp(self.config.EWAddr, self.config.EWPort);
+		// Stop the Bonjour browser if it exists
+		if (this.browser) {
+			this.browser.stop();
+		}
 
-		self.socket.on('status_change', function (status, message) {
-			self.status(status, message);
-		});
+		// Destroy the Bonjour instance if it exists
+		if (bonjour) {
+			bonjour.destroy();
+		}
 
-		self.socket.on('error', function (err) {
-			debug('Network error', err.message);
-			self.status(self.STATE_ERROR, err);
-			self.log('error','Network error: ' + err.message);
+		if (this.socket) {
+			this.socket.destroy()
+			this.socket = null
+		}
+	}
 
-			// Tear down and reinitialize. The server port is going to change.  Otherwise have to edit configuration and save to get new port
-			self.destroy();
-			self.init();
-		});
+	async configUpdated(config) {
+		this.config = config || {}
+		
+		this.config.EWServer = this.config.EWServers || '' // Fallback to empty string if undefined
+		this.log('info', `Selected EasyWorship Server: ${this.config.EWServer}`)
+		this.saveConfig(this.config)
 
-		self.socket.on('connect', function () {
-			if (self.connected) {
-				return;
+		// Reset and reconnect only if needed
+		if (this.config.EWServer !== this.previousEWServer) {
+			this.previousEWServer = this.config.EWServer
+
+			if (this.socket) {
+				this.socket.destroy()
+				this.socket = null
+				this.connected = false
 			}
 
-			if (self.config.ClientName === undefined) {
-				self.log('error','No name in configuration.  Can\'t connect to ' + self.config.EWServer);
-				return;
+			// Clear retry interval if switching servers
+			if (this.retryInterval) {
+				clearInterval(this.retryInterval);
+				this.retryInterval = null;
 			}
-			self.status(self.STATE_OK);
-			self.log('info','Connected to ' + self.config.EWServer);
-			debug('Connected to ' + self.config.EWServer);
-			self.connected = true;
-			var cmd = '{"action":"connect", "uid":"' + self.config.UUID + '", "device_name":"' + self.config.ClientName + '", "device_type":8, "requestrev":"0"}';
-			var sendBuf = Buffer.from(cmd + '\r\n', 'latin1');
-			if (sendBuf != '') {
-				if (self.socket !== undefined && self.socket.connected) {
-					self.socket.send(sendBuf);
-					debug('sent ', cmd);
-				}
-			}
-		})
 
-		self.socket.on('close', function () {
-			self.status(self.STATE_ERROR);
-			self.log('info', 'Lost connection to ' + self.config.EWServer);
-			debug('Lost connection to ' + self.config.EWServer);
-			self.connected = false;
-		})
+			this.ezw = []
+			this.initBonjour(() => {
+				this.initTCP();
+			});
+		} 
+		else {
+			this.updateStatus('ok')
+		}
+	}
 
-		self.socket.on('data', function (data) {
-			try {
-				var json = data.toString();
-				var cmds = json.split('\r\n');
-				for (var i = 0; i < cmds.length - 1; i++) {
-					var cmd = cmds[i].toString();
-					cmd = cmd.split('\r\n')[0];
-					debug(cmd);
-					var command = JSON.parse(cmd);
-					self.requestrev = command['requestrev'];
-					var action = command['action'];
-					if (action == 'notPaired') {
-						self.status(self.STATE_WARNING);
-						self.log('info', 'Not paired with ' + self.config.EWServer);
-						debug('Not paired with ' + self.config.EWServer);
-						self.config.paired = false;
-					}
-					else if (action == 'paired') {
-						self.status(self.STATE_OK);
-						self.log('info', 'Paired with ' + self.config.EWServer);
-						debug('Paired with ' + self.config.EWServer);
-						self.config.paired = true;
-					}
-					else if (action == 'status') {
-						self.status(self.STATE_OK);
-						debug('Received status of ' + self.config.EWServer);
-						self.EZWLogo = command['logo'] ? 1 : 0;
-						self.EZWBlack = command['black'] ? 1 : 0;
-						self.EZWClear = command['clear'] ? 1 : 0;
-						self.EZWLivePreview = 0;
-						self.setVariable('Logo', self.EZWLogo);
-						self.setVariable('Black', self.EZWBlack);
-						self.setVariable('Clear', self.EZWClear);
-						self.setVariable('LivePreview', self.EZWLivePreview);
+	getConfigFields() {
+		return getConfigFields(this);
+	}
 
-						// Pickup values to send for logo/black/clear actions
-						self.rectype = command['rectype'];
-						self.pres_rowid = command['pres_rowid'];
-						self.slide_rowid = command['slide_rowid'];
-						self.pres_no = command['pres_no'];
-						self.slide_no = command['slide_no'];
-						self.schedulerev = command['schedulerev'];
-						self.liverev = command['liverev'];
-						self.imagehash = command['imagehash'];
-						self.permissions = command['permissions'];
+	initFeedbacks() {
+		const feedbacks = getFeedbacks(this);
+		this.setFeedbackDefinitions(feedbacks);
+	}
 
-						debug('{"action":"status","logo":"' + (self.EZWLogo ? 'true' : 'false') + '","black":"' + (self.EZWBlack ? 'true' : 'false') + '","clear":"' + (self.EZWClear ? 'true' : 'false') + '","rectype":' + self.rectype + ',"pres_rowid":"' + self.pres_rowid + '","slide_rowid":"' + self.slide_rowid + '","pres_no":"' + self.pres_no + '","slide_no":"' + self.slide_no + '","schedulerev":"' + self.schedulerev + '","liverev":"' + self.liverev + '","imagehash":"' + self.imagehash + '","permissions":' + self.permissions + ',"requestrev":"' + self.requestrev + '"}');
-					}
-					var sendBuf = Buffer.from('{"action":"heartbeat","requestrev":"' + self.requestrev + '"}\r\n', 'latin1');
-					if (sendBuf != '') {
-						if (self.socket !== undefined && self.socket.connected) {
-							self.socket.send(sendBuf);
-							debug('sent ' + sendBuf.toString());
+	initVariables() {
+		const { definitions, initialValues } = getVariables(); 
+		this.setVariableDefinitions(definitions);
+		this.setVariableValues(initialValues);
+	}
+
+	initPresets() {
+		const presets = getPresets(this);    
+		this.setPresetDefinitions(presets)
+	}
+
+	initActions() {		
+		const actionDefinitions = actions.call(this); // Initialize actions with the correct context
+		this.sendCommand = sendCommand.bind(this); // Bind sendCommand to the instance
+		
+		const boundActions = {};
+		for (const [actionId, actionDef] of Object.entries(actionDefinitions)) {
+			boundActions[actionId] = {
+				...actionDef,
+				callback: (...args) => actionDef.callback.call(this, ...args),
+			};
+		}
+		
+		this.setActionDefinitions(boundActions);
+	}
+
+	updateConfigFields() {
+        this.setConfigFields(this.getConfigFields());
+    }
+
+	initBonjour(callback) {
+		const bonjour = new Bonjour();
+		this.ezw = [];
+		this.log('info', 'Searching for EasyWorship Servers...');
+
+		try {
+			this.browser = bonjour.find({ type: 'ezwremote', protocol: 'tcp' }, (service) => {
+				if (service && service.type === 'ezwremote') {
+					if (service.name && service.port) {
+						const serverName = service.name;
+
+						if (!this.ezw.includes(serverName)) {
+							this.ezw.push(serverName);
+							this.log('info', `Discovered EasyWorship server: ${serverName}`);
+							
+							const address = (service.addresses?.[0]) || (service.referer?.address) || null;
+							this.log('info', `Comparing config.EWServer="${this.config.EWServer}" to serverName="${serverName}", address="${address}"`);
+							
+							if (this.config.EWServer && (serverName.trim().toLowerCase() === this.config.EWServer.trim().toLowerCase()) && address) {
+								this.config.EWServer = serverName;
+								this.config.EWAddr = address;
+								this.config.EWPort = service.port;
+								this.log('info',`Selected EasyWorship server: ${serverName} at ${this.config.EWAddr}:${this.config.EWPort}`);
+								this.saveConfig(this.config);
+
+								if (callback) callback();
+							} else {
+								this.log('info', `No valid IP address found for server: ${serverName}`);
+							}
 						}
 					}
-									}
-			} catch (err) {
-				debug('Exception: ', err, ' on JSON ', data.toString());
+				}
+			});
+
+			this.browser.on('up', (service) => {
+				this.log('info', `Service up: ${JSON.stringify(service)}`);
+			});
+
+			this.browser.on('down', (service) => {
+				if (service && service.name) {
+					const index = this.ezw.indexOf(service.name);
+					if (index !== -1) {
+						this.ezw.splice(index, 1);
+						this.log('info', `Removed EasyWorship server: ${service.name}`);
+					}
+
+					if (this.config.EWServer === service.name) {
+						this.log('warn', `Lost connection to selected EasyWorship server: ${service.name}`);
+						this.paired = false;
+						this.updateStatus('disconnected', 'Lost connection to EasyWorship server');
+						this.initTCP();
+					}
+				}
+			});
+
+			this.browser.on('error', (err) => {
+				this.log('error', `Bonjour error: ${err.message}`);
+				this.paired = false
+				this.updateStatus('error', 'Bonjour discovery failed');
+				this.initTCP();
+			});
+		} catch (err) {
+			this.log('error', `Failed to initialize Bonjour: ${err.message}`);
+			this.paired = false
+			this.updateStatus('error', 'Bonjour initialization failed');
+		}
+	}
+
+	startRetry() {
+		if (this.retryInterval) return;
+		this.retryInterval = setInterval(() => {
+			if (!this.connected) {
+				this.log('info', 'Retrying connection to EasyWorship...');
+				this.initTCP();
+			} else {
+				clearInterval(this.retryInterval);
+				this.retryInterval = null;
+			}
+		}, 5000);
+	}
+
+	initTCP() {
+		// Clear any existing retry interval
+		if (this.retryInterval) {
+			clearInterval(this.retryInterval);
+			this.retryInterval = null;
+		}
+
+		if (this.socket) {
+			this.socket.destroy();
+			this.socket = null;
+		}		
+
+		if (!this.config.EWServer || this.config.EWServer === '') {
+			this.log('info', 'No EasyWorship server selected. Waiting for configuration.');
+			this.updateStatus('bad_config', 'No EasyWorship server selected');
+			return;
+		}
+
+		if (!this.config.EWAddr || this.config.EWAddr === '' || !this.config.EWPort || this.config.EWPort === '') {
+			this.log('info', 'EasyWorship server address or port is not configured. Rediscovering servers...');
+			this.initBonjour(() => {});
+			return;
+		}
+
+		this.socket = new TCPHelper(this.config.EWAddr, this.config.EWPort)
+
+		this.socket.on('status_change', (status, message) => {
+			this.log('info', `initTcp status change: ${status} message: ${message}`)
+			this.updateStatus(status, message)
+		})
+
+		this.socket.on('error', (err) => {
+			this.log('error', `initTCP err: ${JSON.stringify(err)}`);
+			this.updateStatus('connection_failure', err.message);
+			this.paired = false;
+			this.connected = false;
+			this.startRetry();
+		})
+
+		this.socket.on('connect', () => {
+			if (this.connected) {
+				return;
 			}
 
-			self.checkFeedbacks();
-		});
+			if (!this.config.ClientName) {
+				this.updateStatus('bad_config', 'Missing Name in configuration');
+				return;
+			}
+
+			this.updateStatus('ok');
+			this.log('info', `Connected to EasyWorship server at ${this.config.EWAddr}:${this.config.EWPort}`);
+			this.connected = true;
+
+			const cmd = `{"action":"connect", "uid":"${this.config.UUID}", "device_name":"${this.config.ClientName}", "device_type":8, "requestrev":"0"}`;
+			const sendBuf = Buffer.from(cmd + '\r\n', 'latin1');
+			if (this.socket && this.socket.isConnected) {
+				this.socket.send(sendBuf).catch((err) => {
+					this.log('info', `Failed to send command: ${err.message}`);
+				});
+			}
+		})
+
+		this.socket.on('close', () => {
+			this.log('error', 'Connection to EasyWorship server lost. Attempting to reconnect...');
+			this.updateStatus('connection_failure', 'Connection to EasyWorship server lost');
+			this.connected = false;
+			this.paired = false;
+			this.startRetry();
+			this.initBonjour(() => {});
+		})
+
+		this.socket.on('data', (data) => {
+			this.handleSocketData(data)
+		})
+	}
+
+	handleSocketData(data) {
+		try {
+			const json = data.toString();
+			const cmds = json.split('\r\n');
+			for (let i = 0; i < cmds.length - 1; i++) {
+				let cmd = cmds[i].toString();
+				cmd = cmd.split('\r\n')[0];
+				const command = JSON.parse(cmd);
+				this.requestrev = command['requestrev'];
+				const action = command['action'];
+
+				if (action === 'notPaired') {
+					this.updateStatus('unknown_error', 'Not paired with ' + this.config.EWServer);
+					this.log('info', 'Not paired with ' + this.config.EWServer);
+    				this.paired = false; // <-- Unset paired flag
+					this.config.paired = false;
+				} else if (action === 'paired') {
+					this.updateStatus('ok');
+					this.log('info', 'Paired with ' + this.config.EWServer);
+    				this.paired = true; // <-- Set paired flag
+					this.config.paired = true;
+				} else if (action === 'status') {
+					this.updateStatus('ok');
+					this.log('info', 'Received status of ' + this.config.EWServer);
+
+					this.EZWLogo = command['logo'] ? 1 : 0;
+					this.EZWBlack = command['black'] ? 1 : 0;
+					this.EZWClear = command['clear'] ? 1 : 0;
+					//this.EZWLivePreview = 0;
+					this.setVariableValues({
+						'Logo': this.EZWLogo,
+						'Black': this.EZWBlack,
+						'Clear': this.EZWClear,
+						'LivePreview': this.EZWLivePreview
+					})
+
+					// Pickup values to send for logo/black/clear actions
+					this.rectype = command['rectype'];
+					this.pres_rowid = command['pres_rowid'];
+					this.slide_rowid = command['slide_rowid'];
+					this.pres_no = command['pres_no'];
+					this.slide_no = command['slide_no'];
+					this.schedulerev = command['schedulerev'];
+					this.liverev = command['liverev'];
+					this.imagehash = command['imagehash'];
+					this.permissions = command['permissions'];
+				}
+
+				const sendBuf = Buffer.from(`{"action":"heartbeat","requestrev":"${this.requestrev}"}\r\n`, 'latin1');
+				
+				if (sendBuf != '') {
+					if (this.socket && this.socket.isConnected) {
+						this.socket.send(sendBuf);
+					}
+				}
+			}
+		} catch (err) {
+			this.log('error', 'handleSocketData Exception: ', err, ' on JSON ', data.toString());
+		}
+
+		this.checkFeedbacks();
 	}
 }
-
-instance.prototype.destroy = function() {
-	var self = this;
-
-	if (self.socket !== undefined) {
-		self.socket.destroy();
-	}
-
-	debug("module destroyed: ", self.id);
-}
-
-instance_skel.extendedBy(instance);
-exports = module.exports = instance;
+runEntrypoint(EasyWorshipInstance, [])
