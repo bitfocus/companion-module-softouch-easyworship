@@ -2,5 +2,3 @@ node_modules/
 /pkg
 /pkg.tgz
 .yarn/
-/.yarnrc.yml
-/.yarn.lock
