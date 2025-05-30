@@ -3,7 +3,7 @@
 	"name": "softouch-easyworship",
 	"shortname": "softouch-easyworship",
 	"description": "softouch-easyworship",
-	"version": "2.1.0",
+	"version": "2.0.1",
 	"license": "MIT",
 	"repository": "git+https://github.com/bitfocus/companion-module-softouch-easyworship.git",
 	"bugs": "https://github.com/bitfocus/companion-module-softouch-easyworship/issues",
