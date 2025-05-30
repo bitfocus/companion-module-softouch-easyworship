@@ -2,3 +2,5 @@ node_modules/
 /pkg
 /pkg.tgz
 .yarn/
+package-lock.json
+softouch-easyworship**
