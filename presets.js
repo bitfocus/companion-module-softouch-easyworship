@@ -65,9 +65,7 @@ function getPresets(instance) {
             steps: [{
                 down: [{
                     actionId: button.action,
-                    options: {
-                        id: `id_${button.action}`,
-                    },
+                    options: {},
                 }],
                 up: [],
             }],
@@ -78,9 +76,7 @@ function getPresets(instance) {
         if (button.action.includes('sched')) {
             preset.steps[0].down.push({
                 actionId: startButton.action,
-                options: {
-                    id: `id_${startButton.action}`,
-                },
+                options: {},
             });
         }
 

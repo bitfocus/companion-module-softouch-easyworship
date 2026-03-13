@@ -12,7 +12,7 @@ jobs:
     permissions:
       packages: read
 
-    uses: bitfocus/actions/.github/workflows/module-checks.yaml@main
+    uses: bitfocus/actions/.github/workflows/module-checks.yaml@6fca976b355200c8e6b05d888b1cd8109f3fa5c9 # main as of 2026-03-12
     # with:
     #   upload-artifact: true # uncomment this to upload the built package as an artifact to this workflow that you can download and share with others
 

@@ -1,82 +1,77 @@
 ## Softouch EasyWorship
 
-This module controls EasyWorship 7.3+
+This module controls EasyWorship 7.3+ over your local network using Bonjour/mDNS discovery.
 
-**Available Button Presets**
+### Setup
 
-* EZW: Logo Command
-* EZW: Black Command
-* EZW: Clear Command
-* EZW: Previous Slide Command
-* EZW: Next Slide Command
-* EZW: Play Command
-* EZW: Pause Command
-* EZW: Toggle Command
-* EZW: Send Command 
+1. EasyWorship must be running on the same network as Companion.
+2. Add the module in Companion, enter a **Remote Name**, and select your EasyWorship server from the dropdown.
+3. On first connection, approve the pairing request on the EasyWorship machine. Subsequent connections with the same Companion instance pair automatically.
 
-**Trouble Shooting Missing EasyWorship Servers in Connections**
-Sometimes there will not be any servers in the EasyWorship Servers dropdown selector.
-If this happens then it means one of two things. One, there aren't actually any EasyWorship servers running.
-Two, that companion got confused about something.  In the latter case try restarting companion.
-If that doesn't work then reboot your machine.
+Bonjour (mDNS) must be available on the network. On Windows, installing iTunes or Apple's Bonjour Print Services provides this. Most macOS and Linux systems have it by default.
 
-If you've done all this, perhaps multiple times, and EasyWorship doesn't show up.  Run the powershell
-script.
+### Actions
 
-**Variables**
-$(EZW:Logo) used in Feedback to control the Logo buttons color
-$(EZW:Black) used in Feedback to control the Black buttons color
-$(EZW:Clear) used in Feedback to control the Clear buttons color
+**Display Overlays**
+* Toggle Logo — Logo and Black are mutually exclusive (enabling one disables the other)
+* Toggle Black — Black and Logo are mutually exclusive
+* Toggle Clear — Independent of Logo and Black
 
-**Addition Button Manual Configuration - Colors are suggestions only.  Use whatever you like best**
-## Logo - Add 2 addition feedbacks to have the logo buttons state mimic EasyWorship
-internal: Check variable value.
-    Variable: $(EZW:Logo)
-    Operation: =
-    Value: 0
-    Change style properties of Color and Background
-    Color: White
-    Background: Black
+**Slide Navigation**
+* Previous Slide
+* Next Slide
+* Go to Slide — Jump to a specific slide number
 
-internal: Check variable value.
-    Variable: $(EZW:Logo)
-    Operation: =
-    Value: 1
-    Change style properties of Color and Background
-    Color: Black
-    Background: R=255 G=204 B=102
+**Schedule Navigation**
+* Previous Schedule
+* Next Schedule
+* Go to Schedule — Jump to a specific schedule item number
 
-## Black - Add 2 addition feedbacks to have the black buttons state mimic EasyWorship
-internal: Check variable value.
-    Variable: $(EZW:Black)
-    Operation: =
-    Value: 0
-    Change style properties of Color and Background
-    Color: White
-    Background: Black
+**Build Navigation**
+* Previous Build — Navigate animation steps within a slide
+* Next Build
 
-internal: Check variable value.
-    Variable: $(EZW:Black)
-    Operation: =
-    Value: 1
-    Change style properties of Color and Background
-    Color: Black
-    Background: R=255 G=204 B=102
+**Position Jumps**
+* Presentation Start — Go to the first slide of the current item
+* Slide Start — Go to the beginning of the current slide
 
-## Clear - Add 2 addition feedbacks to have the clear buttons state mimic EasyWorship
-internal: Check variable value.
-    Variable: $(EZW:Clear)
-    Operation: =
-    Value: 0
-    Change style properties of Color and Background
-    Color: White
-    Background: Black
+**Media Playback**
+* Play
+* Pause
+* Toggle Play/Pause
 
-internal: Check variable value.
-    Variable: $(EZW:Clear)
-    Operation: =
-    Value: 1
-    Change style properties of Color and Background
-    Color: Black
-    Background: R=255 G=204 B=102
+**Connection**
+* Reconnect to EasyWorship — Full reset: tears down the connection and restarts discovery
 
+### Feedbacks
+
+Boolean feedbacks that highlight buttons when active:
+
+* **Logo Active** — Highlights when the Logo overlay is displayed
+* **Black Active** — Highlights when the Black screen overlay is displayed
+* **Clear Active** — Highlights when the Clear overlay is active
+* **Live Preview Active** — Highlights when Live Preview is enabled
+* **Connected & Paired** — Highlights when connected and paired with EasyWorship
+
+### Variables
+
+* `$(softouch-easyworship:Logo)` — Logo state (0 = Off, 1 = On)
+* `$(softouch-easyworship:Black)` — Black state (0 = Off, 1 = On)
+* `$(softouch-easyworship:Clear)` — Clear state (0 = Off, 1 = On)
+* `$(softouch-easyworship:LivePreview)` — Live Preview state (0 = Off, 1 = On)
+* `$(softouch-easyworship:Connected)` — Connection status (0 = Disconnected, 1 = Connected & Paired)
+
+### Troubleshooting
+
+**No servers in the dropdown?**
+* Verify EasyWorship is running on the network.
+* Ensure Bonjour/mDNS is available (see Setup above).
+* Try the **Reconnect to EasyWorship** action or restart Companion.
+
+**Connected but not paired?**
+* Check the EasyWorship machine for a pending pairing approval dialog.
+* The module will automatically re-send the pair request on each button press.
+
+**Connection drops during a service?**
+* The module automatically reconnects with aggressive retry timing and never stops trying.
+* Use the `$(softouch-easyworship:Connected)` variable or the **Connected & Paired** feedback to show connection status on a button.

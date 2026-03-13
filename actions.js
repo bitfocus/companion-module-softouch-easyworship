@@ -1,506 +1,307 @@
+/**
+ * Builds the full status payload that EasyWorship expects when toggling
+ * display overlays (logo, black, clear). EW requires the complete current
+ * state — not just the changed field — because it replaces its state
+ * wholesale from this payload.
+ */
+function buildStatusPayload(instance) {
+	return {
+		action: 'status',
+		logo: instance.EZWLogo === 1,
+		black: instance.EZWBlack === 1,
+		clear: instance.EZWClear === 1,
+		rectype: instance.rectype,
+		pres_rowid: instance.pres_rowid,
+		slide_rowid: instance.slide_rowid,
+		pres_no: instance.pres_no,
+		slide_no: instance.slide_no,
+		schedulerev: instance.schedulerev,
+		liverev: instance.liverev,
+		imagehash: instance.imagehash,
+		permissions: instance.permissions,
+		requestrev: instance.requestrev,
+	}
+}
+
+/**
+ * Gate for all outgoing commands. Returns true if the command was sent,
+ * false if it was dropped. Callers that do optimistic state updates
+ * should revert when this returns false.
+ *
+ * When unpaired but TCP-connected, re-sends the pair request so the
+ * user doesn't have to manually reconnect. When fully disconnected,
+ * schedules a reconnection attempt.
+ */
 const sendCommand = function (cmd) {
-    //this.log('debug', 'sendCommand - Sending command: ' + JSON.stringify(cmd));
+	if (!this.paired) {
+		this.log('warn', 'Not paired with EasyWorship. Command not sent.')
 
-    if (!this.paired) {
-        //this.log('warn', 'Not paired with EasyWorship. Command not sent: ' + cmd);
-        this.log('warn', 'Not paired with EasyWorship');
+		if (this.connected) {
+			// TCP is up but not paired — re-send the pair request so the
+			// next button press has a chance of working without manual intervention
+			this.log('info', 'Connected but not paired. Re-sending pair request...')
+			const sanitizedName = (this.config.ClientName || '').replace(/[\x00-\x1f]/g, '').slice(0, 64)
+			this.socketSend(JSON.stringify({
+				action: 'connect',
+				uid: this.config.UUID,
+				device_name: sanitizedName,
+				device_type: 8,
+				requestrev: '0',
+			}))
+		} else {
+			this.scheduleReconnect()
+		}
+		return false
+	}
 
-        if (this.connected) {
-            this.log('info', 'this.connected is true, but not paired. Destroying connection and reinitializing...');
-            this.destroy();
-            this.init(this.config);
-        } else {
-            if (!this.config.EWAddr || !this.config.EWPort) {
-                this.log('warn', 'EasyWorship server address or port is missing. Rediscovering servers...');
-                this.initBonjour(() => {
-                    this.initTCP();
-                });
-            } else {
-                this.log('info', 'Attempting to connect to EasyWorship...');
-                this.initTCP();
-            }
-        }
-        
-        return;
-    }
+	if (!cmd) return false
 
-    if (cmd === undefined || cmd === null || cmd === ''){
-        return
-    }
-
-    const sendBuf = Buffer.from(cmd + '\r\n', 'latin1');
-    if (this.socket) {
-        if (this.socket.isConnected !== undefined && this.socket.isConnected) {
-            this.socket.send(sendBuf)
-                .then((i) => {
-                })
-                .catch((err) => {
-                });
-        } else {
-            this.log('error', `Socket not connected or state unknown (connected: ${this.socket.isConnected}).`);
-        }
-    } else {
-        this.log('error', 'sendCommand - Socket is undefined.');
-    }
-};
+	this.socketSend(cmd)
+	return true
+}
 
 module.exports = {
 	sendCommand,
-    actions() {
-        const defaultChoice = { id: '0', label: 'Not used' };
+	actions() {
+		return {
+			// --- Display overlay toggles ---
+			// Logo, Black, and Clear are display overlays in EasyWorship.
+			// Logo and Black are mutually exclusive (enabling one disables the other).
+			// Clear operates independently — it can be on alongside Logo or Black.
+			// All three use optimistic state updates for responsive button feedback,
+			// reverting if the command fails to send.
 
-        // Define the actions
-        let actions = {
-            logo: {
-                name: 'Logo Command',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_logo',
-                    label: 'Command:',
-                    tooltip: 'Toggle the Logo screen',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                    if (this.EZWLogo === 0) {
-                        this.EZWLogo = 1
-                        this.EZWBlack = 0
-                    } else {
-                        this.EZWLogo = 0
-                    }
+			logo: {
+				name: 'Toggle Logo',
+				options: [],
+				callback: () => {
+					const prevLogo = this.EZWLogo
+					const prevBlack = this.EZWBlack
 
-                    const cmd = JSON.stringify({
-                        action: 'status',
-                        logo: this.EZWLogo === 1,
-                        black: this.EZWBlack === 1,
-                        clear: this.EZWClear === 1,
-                        rectype: this.rectype,
-                        pres_rowid: this.pres_rowid,
-                        slide_rowid: this.slide_rowid,
-                        pres_no: this.pres_no,
-                        slide_no: this.slide_no,
-                        schedulerev: this.schedulerev,
-                        liverev: this.liverev,
-                        imagehash: this.imagehash,
-                        permissions: this.permissions,
-                        requestrev: this.requestrev,
-                    })
+					// Logo and Black are mutually exclusive in EW
+					if (this.EZWLogo === 0) {
+						this.EZWLogo = 1
+						this.EZWBlack = 0
+					} else {
+						this.EZWLogo = 0
+					}
 
-                    this.sendCommand(cmd)
-                    this.checkFeedbacks() 
-                },
-            },
-            black: {
-                name: 'Toggle Black',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_black',
-                    label: 'Command:',
-                    tooltip: 'Toggle the Black screen',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                    if (this.EZWBlack === 0) {
-                        this.EZWBlack = 1
-                        this.EZWLogo = 0
-                    } else {
-                        this.EZWBlack = 0
-                    }
+					if (!this.sendCommand(JSON.stringify(buildStatusPayload(this)))) {
+						// Command didn't send — revert so buttons don't lie
+						this.EZWLogo = prevLogo
+						this.EZWBlack = prevBlack
+					}
+					this.checkFeedbacks()
+				},
+			},
+			black: {
+				name: 'Toggle Black',
+				options: [],
+				callback: () => {
+					const prevBlack = this.EZWBlack
+					const prevLogo = this.EZWLogo
 
-                    const cmd = JSON.stringify({
-                        action: 'status',
-                        logo: this.EZWLogo === 1,
-                        black: this.EZWBlack === 1,
-                        clear: this.EZWClear === 1,
-                        rectype: this.rectype,
-                        pres_rowid: this.pres_rowid,
-                        slide_rowid: this.slide_rowid,
-                        pres_no: this.pres_no,
-                        slide_no: this.slide_no,
-                        schedulerev: this.schedulerev,
-                        liverev: this.liverev,
-                        imagehash: this.imagehash,
-                        permissions: this.permissions,
-                        requestrev: this.requestrev,
-                    })
+					// Black and Logo are mutually exclusive in EW
+					if (this.EZWBlack === 0) {
+						this.EZWBlack = 1
+						this.EZWLogo = 0
+					} else {
+						this.EZWBlack = 0
+					}
 
-                    this.sendCommand(cmd)
-                    this.checkFeedbacks() 
-                },
-            },
-            clear: {
-                name: 'Toggle Clear',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_clear',
-                    label: 'Command:',
-                    tooltip: 'Toggle the Clear screen',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                    this.EZWClear = this.EZWClear === 0 ? 1 : 0
+					if (!this.sendCommand(JSON.stringify(buildStatusPayload(this)))) {
+						this.EZWBlack = prevBlack
+						this.EZWLogo = prevLogo
+					}
+					this.checkFeedbacks()
+				},
+			},
+			clear: {
+				name: 'Toggle Clear',
+				options: [],
+				callback: () => {
+					const prevClear = this.EZWClear
 
-                    const cmd = JSON.stringify({
-                        action: 'status',
-                        logo: this.EZWLogo === 1,
-                        black: this.EZWBlack === 1,
-                        clear: this.EZWClear === 1,
-                        rectype: this.rectype,
-                        pres_rowid: this.pres_rowid,
-                        slide_rowid: this.slide_rowid,
-                        pres_no: this.pres_no,
-                        slide_no: this.slide_no,
-                        schedulerev: this.schedulerev,
-                        liverev: this.liverev,
-                        imagehash: this.imagehash,
-                        permissions: this.permissions,
-                        requestrev: this.requestrev,
-                    })
+					this.EZWClear = this.EZWClear === 0 ? 1 : 0
 
-                    this.sendCommand(cmd)
-                    this.checkFeedbacks() 
-                },
-            },
-            prevslide: {
-                name: 'Previous Slide',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_prevslide',
-                    label: 'Command:',
-                    tooltip: 'Goto the previous slide',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                    const cmd = JSON.stringify({
-                        action: 'prevSlide',
-                        requestrev: this.requestrev,
-                    })
+					if (!this.sendCommand(JSON.stringify(buildStatusPayload(this)))) {
+						this.EZWClear = prevClear
+					}
+					this.checkFeedbacks()
+				},
+			},
 
-                    this.sendCommand(cmd)
-                },
-            },
-            nextslide: {
-                name: 'Next Slide',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_nextslide',
-                    label: 'Command:',
-                    tooltip: 'Goto the next slide',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                    const cmd = JSON.stringify({
-                        action: 'nextSlide',
-                        requestrev: this.requestrev,
-                    })
+			// --- Slide navigation ---
+			// These operate within the currently active schedule item.
 
-                    this.sendCommand(cmd)
-                },
-            },
-            play: {
-                name: 'Play Command',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_play',
-                    label: 'Command:',
-                    tooltip: 'Play the media',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                    const cmd = JSON.stringify({
-                        action: 'Play',
-                        requestrev: this.requestrev,
-                    })
+			prevslide: {
+				name: 'Previous Slide',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'prevSlide', requestrev: this.requestrev }))
+				},
+			},
+			nextslide: {
+				name: 'Next Slide',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'nextSlide', requestrev: this.requestrev }))
+				},
+			},
 
-                    this.sendCommand(cmd)
-                },
-            },
-            pause: {
-                name: 'Pause Command',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_pause',
-                    label: 'Command:',
-                    tooltip: 'Pause the media',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                    const cmd = JSON.stringify({
-                        action: 'Pause',
-                        requestrev: this.requestrev,
-                    })
+			// --- Media playback ---
+			// Controls media playback within the current schedule item.
+			// Note: EW does not report play/pause state back to us, so there
+			// is no feedback for these — the tech must watch the EW output.
 
-                    this.sendCommand(cmd)
-                },
-            },
-            toggle: {
-                name: 'Toggle Command',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_toggle',
-                    label: 'Command:',
-                    tooltip: 'Toggle Play/Pause for the media',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                    const cmd = JSON.stringify({
-                        action: 'Toggle',
-                        requestrev: this.requestrev,
-                    })
+			play: {
+				name: 'Play',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'Play', requestrev: this.requestrev }))
+				},
+			},
+			pause: {
+				name: 'Pause',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'Pause', requestrev: this.requestrev }))
+				},
+			},
+			toggle: {
+				name: 'Toggle Play/Pause',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'Toggle', requestrev: this.requestrev }))
+				},
+			},
 
-                    this.sendCommand(cmd)
-                },
-            },
-            prevsched: {
-                name: 'Schedule Previous Command',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_prevsched',
-                    label: 'Command:',
-                    tooltip: 'Goto the previous schedule',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: async () => {
-                    const cmd = JSON.stringify({
-                        action: 'prevSchedule',
-                        requestrev: this.requestrev,
-                    })
+			// --- Schedule navigation ---
+			// Moves between items in the EW schedule (songs, scriptures, media, etc).
+			// The presets auto-chain Presentation Start after these so the new
+			// schedule item starts from slide 1.
 
-                    this.sendCommand(cmd)
-                },
-            },
-            nextsched: {
-                name: 'Schedule Next Command',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_nextsched',
-                    label: 'Command:',
-                    tooltip: 'Goto the next schedule',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: async () => {
-                    const cmd = JSON.stringify({
-                        action: 'nextSchedule',
-                        requestrev: this.requestrev,
-                    })
+			prevsched: {
+				name: 'Previous Schedule',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'prevSchedule', requestrev: this.requestrev }))
+				},
+			},
+			nextsched: {
+				name: 'Next Schedule',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'nextSchedule', requestrev: this.requestrev }))
+				},
+			},
 
-                    this.sendCommand(cmd)
-                },
-            },
-            prevbuild: {
-                name: 'Build Previous Command',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_prevbuild',
-                    label: 'Command:',
-                    tooltip: 'Goto the previous build',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                const cmd = JSON.stringify({
-                    action: 'prevBuild',
-                    requestrev: this.requestrev,
-                })
+			// --- Build navigation ---
+			// Navigates through slide builds (animation steps within a single slide).
 
-                this.sendCommand(cmd)
-                },
-            },
-            nextbuild: {
-                name: 'Build Next Command',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_nextbuild',
-                    label: 'Command:',
-                    tooltip: 'Goto the next build',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                    const cmd = JSON.stringify({
-                        action: 'nextBuild',
-                        requestrev: this.requestrev,
-                    })
+			prevbuild: {
+				name: 'Previous Build',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'prevBuild', requestrev: this.requestrev }))
+				},
+			},
+			nextbuild: {
+				name: 'Next Build',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'nextBuild', requestrev: this.requestrev }))
+				},
+			},
 
-                    this.sendCommand(cmd)
-                },
-            },
-            presstart: {
-                name: 'Presentation Start Command',
-                options: [
-                {
-                    type: 'dropdown',
-                    id: 'id_presstart',
-                    label: 'Command:',
-                    tooltip: 'Goto the presentation start',
-                    default: 0,
-                    choices: [defaultChoice],
-                },
-                ],
-                callback: (action) => {
-                    const cmd = JSON.stringify({
-                        action: 'gotoStartPresentation',
-                        requestrev: this.requestrev,
-                    })
+			// --- Position jumps ---
 
-                    this.sendCommand(cmd)
-                },
-            },
-            slidestart: {
-                name: 'Slide Start Command',
-                options: [{
-                    type: 'dropdown',
-                    id: 'id_slidestart',
-                    label: 'Command:',
-                    tooltip: 'Goto the slide start',
-                    default: 0,
-                    choices: [defaultChoice],
-                }],
-                callback: (action) => {
-                    const cmd = JSON.stringify({
-                        action: 'gotoStartSlide',
-                        requestrev: this.requestrev,
-                    })
+			presstart: {
+				name: 'Presentation Start',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'gotoStartPresentation', requestrev: this.requestrev }))
+				},
+			},
+			slidestart: {
+				name: 'Slide Start',
+				options: [],
+				callback: () => {
+					this.sendCommand(JSON.stringify({ action: 'gotoStartSlide', requestrev: this.requestrev }))
+				},
+			},
 
-                    this.sendCommand(cmd)
-                },
-            },
-            connectezw: {
-                name: 'Connect to EasyWorship',
-                options: [{
-                    type: 'dropdown',
-                    id: 'id_connectezw',
-                    label: 'Command:',
-                    tooltip: 'Connect to EasyWorship',
-                    default: 0,
-                    choices: [defaultChoice],
-                }],
-                callback: async () => {
-                    if (this.connected) {
-                        this.destroy()
-                        this.init(this.config)
-                    } 
-                    else {
-                        if (!this.config.EWAddr || !this.config.EWPort) {
-                            this.log('warn', 'EasyWorship server address or port is missing. Rediscovering servers...')
-                            this.initBonjour(() => {
-                                this.initTCP();
-                            });
-                        } else {
-                            this.log('info', 'Attempting to connect to EasyWorship...')
-                            this.initTCP()
-                        }
-                    }
-                },
-            },
-            gotoslide: {
-                name: 'Goto Slide',
-                options: [
-                {
-                    type: 'number',
-                    min: 1,
-                    id: 'id_gotoslide',
-                    label: 'Go to slide:',
-                    tooltip: 'Enter the number of the slide to go to.',
-                    default: 1,
-                    required: true,
-                },
-                ],
-                callback: (action) => {
-                    const slideNum = Number(action.options.id_gotoslide);
-                    if (!Number.isInteger(slideNum) || slideNum < 1) {
-                        this.log('error', `Invalid slide number: ${action.options.id_gotoslide}`);
-                        return;
-                    }
-                    this.log('info', ` slide number: ${slideNum}`);
-                    const cmd = JSON.stringify({
-                        action: 'gotoSlide ' + slideNum,
-                        requestrev: this.requestrev,
-                    });
-                    this.sendCommand(cmd)
-                },
-            },
-            gotoschedule: {
-                name: 'Goto Schedule',
-                options: [
-                {
-                    type: 'number',
-                    min: 1,
-                    id: 'id_gotoschedule',
-                    label: 'Go to schedule:',
-                    tooltip: 'Enter the schedule number to go to.',
-                    default: 1,
-                    required: true,
-                },
-                ],
-                callback: (action) => {
-                    const schedNum = Number(action.options.id_gotoschedule);
-                    if (!Number.isInteger(schedNum) || schedNum < 1) {
-                        this.log('error', `Invalid slide number: ${action.options.id_gotoschedule}`);
-                        return;
-                    }
+			// --- Connection management ---
+			// Full reset: tears down TCP, stops mDNS, and restarts discovery from scratch.
+			// Resets the retry counter so the user gets immediate aggressive retries.
 
-                    this.log('info', ` Schedule number: ${schedNum}`);
-                    const cmd = JSON.stringify({
-                        action: 'gotoSchedule ' + schedNum,
-                        requestrev: this.requestrev,
-                    })
-                    this.sendCommand(cmd)
-                },
-            },
-            // live: {
-            //     name: 'Live Preview',
-            //     options: [],
-            //     callback: () => {
-            //         // Toggle the Live Preview state
-            //         this.EZWLivePreview = this.EZWLivePreview === 0 ? 1 : 0;
+			connectezw: {
+				name: 'Reconnect to EasyWorship',
+				options: [],
+				callback: () => {
+					// Nuclear reset: tear everything down and start fresh.
+					// This is the ONE place we force-restart Bonjour — the user
+					// explicitly asked for a reconnect.
+					this.retryAttempts = 0
+					this.clearRetry()
+					this.clearIdleTimer()
+					this.destroySocket()
+					this.stopDiscovery()
+					this.startDiscovery()
+				},
+			},
 
-            //         const cmd = JSON.stringify({
-            //             action: 'live',
-            //             requestrev: this.requestrev,
-            //         })
-            //         this.sendCommand(cmd)
+			// --- Parameterized jumps ---
+			// Go to a specific slide or schedule item by number.
+			// The number is concatenated into the action string because
+			// that's the format EW's remote protocol expects.
 
-            //         // Trigger feedbacks
-            //         this.checkFeedbacks('is_livepreview');
-            //     },
-            // },
-        };
-
-        // Return the actions object
-        return actions;
-    },
-};
+			gotoslide: {
+				name: 'Go to Slide',
+				options: [{
+					type: 'number',
+					min: 1,
+					id: 'id_gotoslide',
+					label: 'Slide number:',
+					tooltip: 'Enter the slide number to go to.',
+					default: 1,
+					required: true,
+				}],
+				callback: (action) => {
+					const slideNum = Number(action.options.id_gotoslide)
+					if (!Number.isInteger(slideNum) || slideNum < 1) {
+						this.log('error', `Invalid slide number: ${action.options.id_gotoslide}`)
+						return
+					}
+					this.sendCommand(JSON.stringify({
+						action: 'gotoSlide ' + slideNum,
+						requestrev: this.requestrev,
+					}))
+				},
+			},
+			gotoschedule: {
+				name: 'Go to Schedule',
+				options: [{
+					type: 'number',
+					min: 1,
+					id: 'id_gotoschedule',
+					label: 'Schedule number:',
+					tooltip: 'Enter the schedule number to go to.',
+					default: 1,
+					required: true,
+				}],
+				callback: (action) => {
+					const schedNum = Number(action.options.id_gotoschedule)
+					if (!Number.isInteger(schedNum) || schedNum < 1) {
+						this.log('error', `Invalid schedule number: ${action.options.id_gotoschedule}`)
+						return
+					}
+					this.sendCommand(JSON.stringify({
+						action: 'gotoSchedule ' + schedNum,
+						requestrev: this.requestrev,
+					}))
+				},
+			},
+		}
+	},
+}
