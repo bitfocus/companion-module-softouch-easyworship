@@ -244,7 +244,7 @@ module.exports = {
 					// explicitly asked for a reconnect.
 					this.retryAttempts = 0
 					this.clearRetry()
-					this.clearIdleTimer()
+					this.clearKeepalive()
 					this.destroySocket()
 					this.stopDiscovery()
 					this.startDiscovery()
