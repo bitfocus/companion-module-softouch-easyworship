@@ -3,7 +3,7 @@
 	"name": "softouch-easyworship",
 	"shortname": "softouch-easyworship",
 	"description": "softouch-easyworship",
-	"version": "2.0.2",
+	"version": "0.0.0",
 	"license": "MIT",
 	"repository": "git+https://github.com/bitfocus/companion-module-softouch-easyworship.git",
 	"bugs": "https://github.com/bitfocus/companion-module-softouch-easyworship/issues",
@@ -13,7 +13,7 @@
 		"type": "node22",
 		"api": "nodejs-ipc",
 		"apiVersion": "0.0.0",
-		"entrypoint": "..\\index.js"
+		"entrypoint": "../src/index.js"
 	},
 	"manufacturer": "Softouch Development Inc",
 	"products": [

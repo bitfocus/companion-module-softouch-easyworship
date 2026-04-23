@@ -1,4 +1,5 @@
 const { InstanceBase, runEntrypoint, TCPHelper } = require('@companion-module/base')
+const UpgradeScripts = require('./upgrades')
 const { Bonjour } = require('bonjour-service')
 const { randomUUID, createHash } = require('crypto')
 const { sendCommand, actions } = require('./actions')
@@ -602,4 +603,4 @@ class EasyWorshipInstance extends InstanceBase {
 	}
 }
 
-runEntrypoint(EasyWorshipInstance, [])
+runEntrypoint(EasyWorshipInstance, UpgradeScripts)
