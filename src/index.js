@@ -24,6 +24,15 @@ const RETRY_VERBOSE_THRESHOLD = 5
 // If the heartbeat send fails, the TCP error handler will trigger reconnection.
 const KEEPALIVE_INTERVAL_MS = 30000
 
+// After this long of continuous failing reconnects, stop hammering the
+// network and switch to a slower cadence. EW is probably offline, the
+// machine is off, or the network is wrong. Keep trying forever (never give
+// up) but at a rate that doesn't fill the log with spam or churn CPU.
+// Bonjour rediscovery is on a separate path, so if EW moves to a new IP
+// while we're slow-retrying, mDNS will still catch it and jump us back in.
+const RETRY_SLOW_THRESHOLD_MS = 3 * 60 * 1000  // 3 minutes of aggressive retries
+const RETRY_SLOW_MS = 30000                     // then one attempt every 30s
+
 // Actions we know how to fully process. Unknown actions still get heartbeat
 // responses and requestrev processing — this keeps us forward-compatible if
 // a future EW version adds new action types we haven't seen yet.
@@ -46,10 +55,19 @@ class EasyWorshipInstance extends InstanceBase {
 		this.previousEWServer = ''
 		this.retryTimeout = null
 		this.retryAttempts = 0
+		// Timestamp when the current retry streak began. Used to decide when
+		// to switch to the slower retry cadence. Cleared on successful pair.
+		this.retryStartedAt = null
+		// How many times this instance has had to reconnect since init.
+		// Exposed as the ReconnectCount variable for tech-support visibility.
+		this._reconnectCount = 0
 		this.bonjour = null
 		this.browser = null
 		this._receiveBuffer = ''
 		this._keepaliveInterval = null
+		// Unknown EW action types we've already logged about, so we only
+		// log each novel action once per session instead of spamming.
+		this._seenUnknownActions = new Set()
 	}
 
 	async init(config) {
@@ -103,8 +121,12 @@ class EasyWorshipInstance extends InstanceBase {
 
 			this.startDiscovery()
 		} catch (error) {
+			// Distinguish init-time code failure from TCP failure. A
+			// connection_failure status makes the tech chase a network
+			// problem that isn't there. Surface the actual error message.
 			this.log('error', `Initialization failed: ${error.message}`)
-			this.updateStatus('connection_failure', 'Initialization failed')
+			if (error.stack) this.log('debug', error.stack)
+			this.updateStatus('unknown_error', `Init failed: ${error.message}`)
 		}
 	}
 
@@ -190,6 +212,7 @@ class EasyWorshipInstance extends InstanceBase {
 			this.resetDisplayState()
 			this.stopDiscovery()
 			this.retryAttempts = 0
+			this.retryStartedAt = null
 			this.startDiscovery()
 		} else if (!this.connected && !this.paired) {
 			// User saved config but we're not connected — make sure we're
@@ -302,13 +325,22 @@ class EasyWorshipInstance extends InstanceBase {
 						this.log('warn', `Server address changed for ${serverName} (was ${this.config.EWAddr}, now ${address})`)
 					}
 
+					// Only persist to Companion's config store when something
+					// actually changed. mDNS re-announces periodically — without
+					// this diff we'd write the same values on every rebroadcast.
+					const changed =
+						this.config.EWServer !== serverName ||
+						this.config.EWServers !== serverName ||
+						this.config.EWAddr !== address ||
+						this.config.EWPort !== service.port
+
 					this.config.EWServer = serverName
 					this.config.EWServers = serverName
 					this.config.EWAddr = address
 					this.config.EWPort = service.port
 					this.previousEWServer = serverName
 					this.log('info', `Connecting to EasyWorship server: ${serverName}`)
-					this.saveConfig(this.config)
+					if (changed) this.saveConfig(this.config)
 					this.connectTCP()
 				}
 			})
@@ -344,14 +376,33 @@ class EasyWorshipInstance extends InstanceBase {
 	scheduleReconnect() {
 		if (this.retryTimeout) return
 
-		// Backoff: 1s → 1.5s → 2.3s → 3.4s → 5s (cap), then 5s forever.
-		// Relentlessly aggressive — the user should never notice a disconnect.
-		const delay = Math.min(RETRY_BASE_MS * Math.pow(1.5, this.retryAttempts), RETRY_MAX_MS)
+		// Mark the start of this retry streak so we can tell how long
+		// we've been failing. Cleared on successful pair.
+		if (this.retryStartedAt === null) {
+			this.retryStartedAt = Date.now()
+		}
+
+		// Phase 1 (first 3 minutes): aggressive backoff — the tech is probably
+		// staring at the screen waiting for reconnection, so hammer fast.
+		//   1s → 1.5s → 2.3s → 3.4s → 5s cap → 5s → 5s → ...
+		// Phase 2 (after 3 minutes): EW is probably offline or the network is
+		// wrong. Slow to 30s so we're not filling logs or burning CPU, but
+		// keep trying forever. Bonjour rediscovery runs on its own path and
+		// will short-circuit this if EW reappears.
+		const elapsed = Date.now() - this.retryStartedAt
+		const delay = elapsed > RETRY_SLOW_THRESHOLD_MS
+			? RETRY_SLOW_MS
+			: Math.min(RETRY_BASE_MS * Math.pow(1.5, this.retryAttempts), RETRY_MAX_MS)
 		this.retryAttempts++
 
 		if (this.retryAttempts <= RETRY_VERBOSE_THRESHOLD) {
 			this.log('info', `Reconnect attempt ${this.retryAttempts} in ${Math.round(delay / 1000)}s...`)
-		} else if (this.retryAttempts % 20 === 0) {
+		} else if (this.retryAttempts === RETRY_VERBOSE_THRESHOLD + 1 && elapsed < RETRY_SLOW_THRESHOLD_MS) {
+			this.log('info', 'Still trying to reconnect (future attempts will be logged periodically)...')
+		} else if (elapsed > RETRY_SLOW_THRESHOLD_MS && this.retryAttempts % 10 === 0) {
+			// Once in slow mode, log every 10th attempt (~every 5 min).
+			this.log('info', `Still trying to reconnect (attempt ${this.retryAttempts}, slow mode)...`)
+		} else if (elapsed <= RETRY_SLOW_THRESHOLD_MS && this.retryAttempts % 20 === 0) {
 			this.log('info', `Still trying to reconnect (attempt ${this.retryAttempts})...`)
 		}
 
@@ -360,6 +411,7 @@ class EasyWorshipInstance extends InstanceBase {
 
 			if (this.connected && this.paired) {
 				this.retryAttempts = 0
+				this.retryStartedAt = null
 				return
 			}
 
@@ -373,6 +425,16 @@ class EasyWorshipInstance extends InstanceBase {
 			// Keep retrying until we're connected and paired
 			this.scheduleReconnect()
 		}, delay)
+	}
+
+	/**
+	 * Increments the session reconnect counter and publishes it as a variable.
+	 * Called from the TCP error/close handlers so the count reflects actual
+	 * disconnect events, not retry attempts (which can be many per disconnect).
+	 */
+	bumpReconnectCount() {
+		this._reconnectCount++
+		this.setVariableValues({ ReconnectCount: this._reconnectCount })
 	}
 
 	/**
@@ -426,11 +488,17 @@ class EasyWorshipInstance extends InstanceBase {
 		this.socket.on('error', (err) => {
 			this.log('error', `TCP error: ${err.message}`)
 			this.updateStatus('connection_failure', err.message)
+			const wasPaired = this.paired
 			this.connected = false
 			this.paired = false
 			this.clearKeepalive()
 			this.setVariableValues({ Connected: 0 })
 			this.checkFeedbacks()
+			// Only count this as a reconnect event if we were actually paired
+			// when it dropped. TCP errors before pairing (initial connect
+			// failures) are handled by the retry loop and shouldn't inflate
+			// the count the tech sees.
+			if (wasPaired) this.bumpReconnectCount()
 			this.scheduleReconnect()
 		})
 
@@ -463,12 +531,14 @@ class EasyWorshipInstance extends InstanceBase {
 		this.socket.on('close', () => {
 			this.log('warn', 'Connection lost. Will retry...')
 			this.updateStatus('connection_failure', 'Connection lost')
+			const wasPaired = this.paired
 			this.connected = false
 			this.paired = false
 			this._receiveBuffer = ''
 			this.clearKeepalive()
 			this.setVariableValues({ Connected: 0 })
 			this.checkFeedbacks()
+			if (wasPaired) this.bumpReconnectCount()
 			this.scheduleReconnect()
 		})
 
@@ -477,13 +547,22 @@ class EasyWorshipInstance extends InstanceBase {
 		})
 	}
 
+	/**
+	 * Writes a command to the socket. Returns true if the send was queued
+	 * synchronously, false if the socket was already gone.
+	 *
+	 * An async send failure (socket dies mid-send) is rare but real: we log
+	 * it AND schedule a reconnect. The sync return value is what callers
+	 * like sendCommand() check to decide whether to revert optimistic UI.
+	 */
 	socketSend(cmd) {
+		if (!this.socket?.isConnected) return false
 		const buf = Buffer.from(cmd + '\r\n', 'latin1')
-		if (this.socket?.isConnected) {
-			this.socket.send(buf).catch((err) => {
-				this.log('error', `Send failed: ${err.message}`)
-			})
-		}
+		this.socket.send(buf).catch((err) => {
+			this.log('error', `Send failed: ${err.message}`)
+			this.scheduleReconnect()
+		})
+		return true
 	}
 
 	/**
@@ -530,9 +609,17 @@ class EasyWorshipInstance extends InstanceBase {
 
 				if (!KNOWN_ACTIONS.has(action)) {
 					// Forward-compatible: future EW versions may add action types
-					// we don't understand yet. Log at debug (not warn) to avoid
-					// spamming, but still send a heartbeat to keep the connection alive.
-					this.log('debug', `Unrecognized action from server: ${action}`)
+					// we don't understand yet. We still ACK with a heartbeat so
+					// the connection stays healthy. Log the first occurrence per
+					// unique action at info level (visible in normal logs), so
+					// if EW starts sending a new action type, we find out in the
+					// wild instead of only when we turn on debug logging.
+					if (!this._seenUnknownActions.has(action)) {
+						this._seenUnknownActions.add(action)
+						this.log('info', `Unknown EW action: ${action} (first occurrence — further instances logged at debug)`)
+					} else {
+						this.log('debug', `Unrecognized action from server: ${action}`)
+					}
 					this.socketSend(JSON.stringify({
 						action: 'heartbeat',
 						requestrev: this.requestrev,
@@ -553,6 +640,7 @@ class EasyWorshipInstance extends InstanceBase {
 					this.log('info', `Paired with ${this.config.EWServer}`)
 					this.paired = true
 					this.retryAttempts = 0
+					this.retryStartedAt = null
 					this.clearRetry()
 					this.startKeepalive()
 					this.setVariableValues({ Connected: 1 })

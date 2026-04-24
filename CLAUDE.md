@@ -33,7 +33,8 @@ The build pipeline overrides four manifest fields in the shipped tgz: `version` 
 - `actions.js` — 17 command actions (logo, black, clear, slide/schedule navigation, media control, go-to-slide/schedule) plus `buildStatusPayload()` helper and `sendCommand()`
 - `feedbacks.js` — 5 boolean feedback states (logo, black, clear, livepreview, connected) + 1 passthrough (`is_none`)
 - `variables.js` — 5 variable definitions matching feedback states (includes Connected)
-- `presets.js` — UI preset button definitions with embedded PNG images (large file due to base64 PNGs)
+- `presets.js` — UI preset button definitions. References PNG icons via `require('./presets-images')`.
+- `presets-images.js` — Base64-encoded PNG button icons, one per const. Split out so `presets.js` stays diff-friendly; any preset-layout change would otherwise be buried under image bytes.
 - `upgrades.js` — Array of upgrade scripts, passed as the second arg to `runEntrypoint()`. Runs on saved button configs when users upgrade the module. Currently contains one script (`v210_removeDummyOptions`) that strips the orphaned `id_logo`/`id_black`/… dummy options left behind when 15 actions dropped their unused `{ id: '0', label: 'Not used' }` dropdowns.
 
 **Connection lifecycle:**
@@ -42,7 +43,10 @@ The build pipeline overrides four manifest fields in the shipped tgz: `version` 
 3. `connectTCP()` → TCP socket connection to server
 4. Pairing handshake via JSON `connect` command with UUID
 5. 30s keepalive heartbeat keeps connection alive; detects dead sockets via TCP send failure
-6. `scheduleReconnect()` — single reconnection path on disconnect (1s→5s exponential backoff, never gives up)
+6. `scheduleReconnect()` — single reconnection path on disconnect. Two phases, both keep trying forever:
+   - **Phase 1 (first 3 minutes):** aggressive backoff, 1s → 1.5s → 2.3s → 3.4s → 5s cap. Tech is probably watching; hammer fast.
+   - **Phase 2 (after 3 minutes of continuous failure):** drops to 30s retries. EW is likely offline or the network is wrong; keep trying but stop burning CPU/logs. Bonjour rediscovery runs on its own path and will short-circuit this if EW reappears on a different IP.
+   - The `connectezw` action and any successful pair reset back to Phase 1 by clearing `retryStartedAt`.
 
 **Critical design intent — cached connect vs Bonjour:**
 The module connects to the last known server/address/port *immediately* on startup, without waiting for Bonjour. Bonjour runs in parallel for discovering new servers and detecting address changes, but it is NOT a gate for connecting. This is intentional — mDNS can be slow or unreliable, and the common case (same server, same address) should connect in under a second. The `!this.connected` guard in the discovery callback prevents Bonjour from stomping on an already-active connection.
@@ -68,6 +72,8 @@ The module connects to the last known server/address/port *immediately* on start
 - **Reconnection:** One path only — `scheduleReconnect()` → retries `connectTCP()` or restarts discovery if address is unknown
 - **Config fields:** Use `default:` not `value:` for textinput initial values — Companion calls `.trim()` on values and will throw on undefined. `static-text` fields do use `value:` (they're display-only).
 - **Upgrade scripts:** Wired via `runEntrypoint(EasyWorshipInstance, UpgradeScripts)` at the bottom of `index.js`. Each script receives `(context, props)` and returns `{ updatedConfig, updatedActions, updatedFeedbacks }` — arrays of mutated entries that Companion persists back into the user's saved button configs.
+- **Variables for diagnostics:** `ReconnectCount` tracks how many times the paired connection has dropped this session. Useful on a debug button (`$(softouch-easyworship:ReconnectCount)`) when diagnosing a flaky network. Incremented in the TCP `error` and `close` handlers, but only when `paired` was true — pre-pair TCP failures are handled by the retry loop and shouldn't inflate the number.
+- **Send-failure signalling:** `socketSend()` returns a boolean — `false` if the socket was already gone when we tried to send. `sendCommand()` propagates that so the overlay toggles (logo/black/clear) revert their optimistic state updates when the write doesn't actually land. Async send failures additionally schedule a reconnect.
 
 ## Known Constraints
 

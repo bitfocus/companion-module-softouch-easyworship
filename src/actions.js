@@ -56,7 +56,13 @@ const sendCommand = function (cmd) {
 
 	if (!cmd) return false
 
-	this.socketSend(cmd)
+	if (!this.socketSend(cmd)) {
+		// Narrow race: we think we're paired but the socket is already gone.
+		// Signal failure so callers revert optimistic UI updates, and kick
+		// the reconnect machinery so the user gets back online fast.
+		this.scheduleReconnect()
+		return false
+	}
 	return true
 }
 
@@ -241,8 +247,10 @@ module.exports = {
 				callback: () => {
 					// Nuclear reset: tear everything down and start fresh.
 					// This is the ONE place we force-restart Bonjour — the user
-					// explicitly asked for a reconnect.
+					// explicitly asked for a reconnect. Reset retry bookkeeping
+					// so they get the fast-retry cadence, not slow-mode.
 					this.retryAttempts = 0
+					this.retryStartedAt = null
 					this.clearRetry()
 					this.clearKeepalive()
 					this.destroySocket()

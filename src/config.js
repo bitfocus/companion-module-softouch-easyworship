@@ -22,7 +22,12 @@ module.exports = {
 				width: 6,
 				value: instance.config.EWServer || 'None',
 			},
-		];
+		]
+
+		// Sort alphabetically so the dropdown order is stable across sessions.
+		// Without this, servers appear in mDNS discovery order, which varies
+		// and confuses techs who expect "Sanctuary" to stay in the same slot.
+		const sortedServers = instance.ezw.slice().sort((a, b) => a.localeCompare(b))
 
 		// Dropdown is rebuilt each time config panel opens and when
 		// updateConfigFields() is called after server discovery events
@@ -35,14 +40,14 @@ module.exports = {
 			allowCustom: false,
 			choices: [
 				{ id: '', label: 'Select a server...' },
-				...instance.ezw.map(server => ({
+				...sortedServers.map(server => ({
 					id: server,
 					label: server,
 				})),
 			],
 		}
 
-		fields.push(dropdown);
-		return fields;
-	}
+		fields.push(dropdown)
+		return fields
+	},
 }
