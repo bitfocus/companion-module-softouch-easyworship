@@ -29,8 +29,9 @@ module.exports = {
 		// and confuses techs who expect "Sanctuary" to stay in the same slot.
 		const sortedServers = instance.ezw.slice().sort((a, b) => a.localeCompare(b))
 
-		// Dropdown is rebuilt each time config panel opens and when
-		// updateConfigFields() is called after server discovery events
+		// Dropdown is rebuilt each time the config panel opens — Companion
+		// calls getConfigFields() on demand, so instance.ezw just needs to
+		// be current at that moment. base 1.x has no push API for this.
 		const dropdown = {
 			type: 'dropdown',
 			label: 'Available EasyWorship Servers',
