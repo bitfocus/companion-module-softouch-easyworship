@@ -18,7 +18,7 @@ No test or lint commands are configured. Uses Yarn 4.9.1 (pinned via `.yarnrc.ym
 ### Releasing
 
 1. Bump `version` in `package.json` only. `companion/manifest.json` version stays at `"0.0.0"` — the build overrides it from `package.json` when producing the shipped `.tgz`. Do NOT bump the manifest version; leaving it at `0.0.0` matches the generator default and avoids the source/ship drift that got v2.1.0 rejected for a different reason.
-2. Tag with **no** `v` prefix (e.g., `git tag -a 2.1.1 -m "2.1.1"`). The repo has a mix of old `v`-prefixed tags and new unprefixed tags; the 2.x-era convention is unprefixed to match what the Bitfocus portal expects.
+2. Tag **with** the `v` prefix (e.g., `git tag -a v2.1.2 -m "v2.1.2"`). Bitfocus maintainers explicitly requested this when releasing 2.1.1 ("in the future please include the 'v' in your version tags") — they had to fix the unprefixed 2.1.1 tag themselves. The repo's 2.0.x–2.1.1 tags are unprefixed; that was wrong. Do not retag old releases.
 3. Push commit and tag to origin.
 4. Submit version on the Bitfocus Developer Portal (My Connections → Submit Version → select tag).
 
@@ -54,7 +54,7 @@ The module connects to the last known server/address/port *immediately* on start
 **Key design decisions:**
 - TCP data is buffered in `_receiveBuffer` and only parsed on complete `\r\n`-delimited lines (handles stream fragmentation)
 - Bonjour instance stored on `this.bonjour` — single persistent instance, do NOT churn/recreate it. The guard `if (this.bonjour) return` in `startDiscovery()` is intentional.
-- `updateConfigFields()` must be called after any change to `this.ezw[]` to push dropdown choices to Companion UI
+- There is NO push API for config fields in `@companion-module/base` 1.x — `setConfigFields()` does not exist and calling it crashes the module process (this caused the v2.1.0/2.1.1 restart loop). The dropdown refreshes because Companion calls `getConfigFields()` each time the user opens the config panel; `this.ezw[]` just needs to be current at that moment.
 - All socket writes go through `socketSend()` which handles encoding and error logging
 - `sendCommand()` validates pairing state and delegates to `socketSend()`; triggers `scheduleReconnect()` if unpaired
 - Cleanup is centralized: `destroySocket()`, `stopDiscovery()`, `clearRetry()`, `clearKeepalive()`. The Reconnect (`connectezw`) action calls all four plus `startDiscovery()` — there is NO separate idle timer; earlier code mistakenly called `this.clearIdleTimer()` here and crashed the button.
@@ -66,7 +66,7 @@ The module connects to the last known server/address/port *immediately* on start
 
 - **State on instance:** `this.paired`, `this.connected`, `this.socket`, `this.ezw[]` (discovered servers), `this.EZWLogo/Black/Clear/LivePreview`
 - **Factory exports:** Each module file exports a function (e.g., `getPresets(instance)`, `actions()`) — not classes
-- **Bonjour discovery:** Servers found via mDNS are stored in `this.ezw[]` and presented as config dropdown choices via `updateConfigFields()`
+- **Bonjour discovery:** Servers found via mDNS are stored in `this.ezw[]` and presented as config dropdown choices when the user opens the config panel (Companion calls `getConfigFields()` on demand). Discovery prefers `service.referer.address` (the source IP of the mDNS response) over `service.addresses[0]`, which can be an unreachable virtual-adapter IP (WSL/Hyper-V NAT).
 - **Cached server on startup:** `this.ezw` is seeded with the saved server name in `init()` so the dropdown has it before Bonjour discovers anything
 - **Status payload:** Logo, black, and clear actions share `buildStatusPayload()` in `actions.js` to construct the 14-field status command
 - **Reconnection:** One path only — `scheduleReconnect()` → retries `connectTCP()` or restarts discovery if address is unknown
@@ -87,3 +87,47 @@ The module connects to the last known server/address/port *immediately* on start
 - **`maintainers` array is not backfilled from `package.json` author.** The manifest ships verbatim. Must be populated in `companion/manifest.json` directly. v2.1.0 was rejected partly for this.
 - **`apiVersion: "0.0.0"` in the source manifest is expected** — build overrides to the real base version.
 - **Reviews can take 1.5+ weeks.** Front-load every review bullet before submitting; a second round is another long wait.
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **companion-module-softouch-easyworship** (129 symbols, 299 relationships, 19 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/companion-module-softouch-easyworship/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/companion-module-softouch-easyworship/clusters` | All functional areas |
+| `gitnexus://repo/companion-module-softouch-easyworship/processes` | All execution flows |
+| `gitnexus://repo/companion-module-softouch-easyworship/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->

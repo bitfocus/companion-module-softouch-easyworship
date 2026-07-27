@@ -228,14 +228,6 @@ class EasyWorshipInstance extends InstanceBase {
 		return getConfigFields(this)
 	}
 
-	/**
-	 * Pushes updated config fields to Companion's UI — call this after
-	 * the server list changes so the dropdown reflects discovered servers.
-	 */
-	updateConfigFields() {
-		this.setConfigFields(this.getConfigFields())
-	}
-
 	initFeedbacks() {
 		this.setFeedbackDefinitions(getFeedbacks(this))
 	}
@@ -300,12 +292,18 @@ class EasyWorshipInstance extends InstanceBase {
 				if (!service || service.type !== 'ezwremote' || !service.name || !service.port) return
 
 				const serverName = service.name
-				const address = service.addresses?.[0] || service.referer?.address || null
+				// Prefer the address the mDNS response actually came from — it's
+				// routable by definition. addresses[] can lead with virtual-adapter
+				// IPs (WSL/Hyper-V NAT, e.g. 172.31.x.x) that are unreachable from
+				// other machines.
+				const address = service.referer?.address || service.addresses?.[0] || null
 
+				// The config dropdown picks this up when the user opens the config
+				// panel — Companion calls getConfigFields() on demand. There is no
+				// push API for config fields in @companion-module/base 1.x.
 				if (!this.ezw.includes(serverName)) {
 					this.ezw.push(serverName)
 					this.log('info', `Discovered EasyWorship server: ${serverName}`)
-					this.updateConfigFields()
 				}
 
 				if (!this.isValidAddress(address, service.port)) {
@@ -352,12 +350,18 @@ class EasyWorshipInstance extends InstanceBase {
 				if (index !== -1) {
 					this.ezw.splice(index, 1)
 					this.log('info', `Removed EasyWorship server: ${service.name}`)
-					this.updateConfigFields()
 				}
 
 				if (this.config.EWServer === service.name) {
-					this.log('warn', `Lost connection to selected server: ${service.name}`)
-					this.destroySocket()
+					// mDNS 'down' can fire spuriously (TTL expiry without a
+					// re-announce) while the TCP connection is perfectly healthy.
+					// The keepalive heartbeat already detects genuinely dead
+					// sockets — never tear down a live connection on mDNS's word.
+					if (this.connected) {
+						this.log('debug', `mDNS reports ${service.name} down but TCP connection is alive — ignoring`)
+						return
+					}
+					this.log('warn', `Selected server went offline: ${service.name}`)
 					this.updateStatus('disconnected', 'Lost connection to EasyWorship server')
 					this.scheduleReconnect()
 				}
